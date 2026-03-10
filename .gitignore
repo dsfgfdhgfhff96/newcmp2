@@ -1,0 +1,79 @@
+# IDE
+.vs/
+.vscode/
+*.suo
+*.userprefs
+**/obj/
+*.user
+*.sln.docstate
+*.slnx
+
+# Build results
+[Dd]bin/
+[Dd]obj/
+[Dd]out/
+
+# Test results
+[Dd]TestResults/
+
+# NuGet Packages
+*.nupkg
+**/packages/
+*.nuget/
+*.nuget/
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+
+# Mac system files
+.DS_Store
+.AppleDouble
+
+# Windows system files
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env.local
+
+# Secrets
+appsettings.Development.json
+appsettings.Production.json
+*.pfx
+*.p12fx
+
+# Logs
+logs/
+*.log
+*.txt
+
+# Test coverage
+coverage/
+*.coverage
+
+# IDE generated files
+*.ide*
+*.DotSettings/
+
+# Rider
+.idea/
+*.DotSettings
+
+# VS Code
+.vscode/
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
