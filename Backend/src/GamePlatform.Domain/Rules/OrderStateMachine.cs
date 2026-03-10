@@ -35,12 +35,12 @@ public static class OrderStateMachine
     {
         if (!ValidTransitions.TryGetValue(from, out var validTargets))
         {
-            throw new InvalidStateTransitionException(from, to);
+            throw new InvalidStateTransitionException(from.ToString(), to.ToString());
         }
 
         if (!validTargets.Contains(to))
         {
-            throw new InvalidStateTransitionException(from, to);
+            throw new InvalidStateTransitionException(from.ToString(), to.ToString());
         }
     }
 }

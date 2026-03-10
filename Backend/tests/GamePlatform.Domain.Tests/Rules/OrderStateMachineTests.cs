@@ -63,7 +63,7 @@ public class OrderStateMachineTests
 
         // Assert
         act.Should().Throw<InvalidStateTransitionException>()
-            .Where(e => e.FromStatus == OrderStatus.Pending && e.ToStatus == OrderStatus.Settled);
+            .Where(e => e.FromStatus == OrderStatus.Pending.ToString() && e.ToStatus == OrderStatus.Settled.ToString());
     }
 
     [Fact]
@@ -74,7 +74,7 @@ public class OrderStateMachineTests
 
         // Assert
         act.Should().Throw<InvalidStateTransitionException>()
-            .Where(e => e.FromStatus == OrderStatus.Pending && e.ToStatus == OrderStatus.Cancelled);
+            .Where(e => e.FromStatus == OrderStatus.Pending.ToString() && e.ToStatus == OrderStatus.Cancelled.ToString());
     }
 
     #endregion
@@ -89,7 +89,7 @@ public class OrderStateMachineTests
 
         // Assert
         act.Should().Throw<InvalidStateTransitionException>()
-            .Where(e => e.FromStatus == OrderStatus.Confirmed && e.ToStatus == OrderStatus.Pending);
+            .Where(e => e.FromStatus == OrderStatus.Confirmed.ToString() && e.ToStatus == OrderStatus.Pending.ToString());
     }
 
     [Fact]
@@ -100,7 +100,7 @@ public class OrderStateMachineTests
 
         // Assert
         act.Should().Throw<InvalidStateTransitionException>()
-            .Where(e => e.FromStatus == OrderStatus.Confirmed && e.ToStatus == OrderStatus.Failed);
+            .Where(e => e.FromStatus == OrderStatus.Confirmed.ToString() && e.ToStatus == OrderStatus.Failed.ToString());
     }
 
     #endregion

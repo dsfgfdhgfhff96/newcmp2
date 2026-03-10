@@ -4,17 +4,18 @@ using GamePlatform.Domain.Enums;
 namespace GamePlatform.Domain.Exceptions;
 
 /// <summary>
-/// 非法状态流转异常
+/// 銶态机异常基类（使用字符串类型）
 /// </summary>
-public class InvalidStateTransitionException : DomainException
+public class StateMachineException : DomainException
 {
     public string FromStatus { get; }
     public string ToStatus { get; }
 
-    public InvalidStateTransitionException(string fromStatus, string toStatus)
+    public StateMachineException(string fromStatus, string toStatus)
         : base($"Invalid state transition from {fromStatus} to {toStatus}.")
     {
         FromStatus = fromStatus;
         ToStatus = toStatus;
     }
+
 }
