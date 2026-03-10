@@ -12,6 +12,8 @@
 [Dd]bin/
 [Dd]obj/
 [Dd]out/
+**/bin/
+**/obj/
 
 # Test results
 [Dd]TestResults/
