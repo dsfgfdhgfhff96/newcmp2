@@ -34,5 +34,15 @@ public enum TransactionType
     /// <summary>
     /// 退款
     /// </summary>
-    Refund = 5
+    Refund = 5,
+
+    /// <summary>
+    /// 管理员充值
+    /// </summary>
+    AdminDeposit = 6,
+
+    /// <summary>
+    /// 管理员扣款
+    /// </summary>
+    AdminWithdraw = 7
 }
