@@ -8,10 +8,7 @@ using GamePlatform.Domain.Interfaces;
 
 namespace GamePlatform.Application.UseCases.Wallet;
 
-/// <summary>
-/// 钱包服务实现
-/// </summary>
-public class WalletService : IWalletService
+public partial class WalletService : IWalletService
 {
     private readonly IWalletRepository _walletRepository;
     private readonly IDepositRequestRepository _depositRequestRepository;
@@ -36,6 +33,8 @@ public class WalletService : IWalletService
         _timeProvider = timeProvider;
     }
 
+    #region 余额查询
+
     public async Task<WalletBalanceResponse> GetBalanceAsync(Guid userId)
     {
         var wallet = await _walletRepository.GetByUserIdAsync(userId);
@@ -55,28 +54,24 @@ public class WalletService : IWalletService
         };
     }
 
+    #endregion
+
+    #region 管理员调整
+
     public async Task<AdminAdjustWalletResponse> AdminDepositAsync(AdminAdjustWalletRequest request)
     {
         if (request.Amount <= 0)
-        {
-            throw new ArgumentException("Amount must be positive");
-        }
+            throw new ArgumentException("充值金额必须大于0");
 
         var wallet = await GetOrCreateWalletAsync(request.UserId);
         var now = _timeProvider.Now;
         var expectedVersion = wallet.Version;
 
-        var transaction = wallet.Credit(
-            request.Amount,
-            TransactionType.AdminDeposit,
-            request.Reason,
-            now);
+        var transaction = wallet.Credit(request.Amount, TransactionType.AdminDeposit, request.Reason, now);
 
         var success = await _walletRepository.UpdateWithCasAsync(wallet, expectedVersion);
         if (!success)
-        {
-            throw new InvalidOperationException("CAS update failed - concurrent modification detected");
-        }
+            throw new InvalidOperationException("CAS更新失败 - 检测到并发修改");
 
         await _walletRepository.AddTransactionAsync(transaction);
         await _unitOfWork.SaveChangesAsync();
@@ -92,25 +87,17 @@ public class WalletService : IWalletService
     public async Task<AdminAdjustWalletResponse> AdminWithdrawAsync(AdminAdjustWalletRequest request)
     {
         if (request.Amount <= 0)
-        {
-            throw new ArgumentException("Amount must be positive");
-        }
+            throw new ArgumentException("扣款金额必须大于0");
 
         var wallet = await GetOrCreateWalletAsync(request.UserId);
         var now = _timeProvider.Now;
         var expectedVersion = wallet.Version;
 
-        var transaction = wallet.Debit(
-            request.Amount,
-            TransactionType.AdminWithdraw,
-            request.Reason,
-            now);
+        var transaction = wallet.Debit(request.Amount, TransactionType.AdminWithdraw, request.Reason, now);
 
         var success = await _walletRepository.UpdateWithCasAsync(wallet, expectedVersion);
         if (!success)
-        {
-            throw new InvalidOperationException("CAS update failed - concurrent modification detected");
-        }
+            throw new InvalidOperationException("CAS更新失败 - 检测到并发修改");
 
         await _walletRepository.AddTransactionAsync(transaction);
         await _unitOfWork.SaveChangesAsync();
@@ -123,13 +110,14 @@ public class WalletService : IWalletService
         };
     }
 
+    #endregion
+
+    #region 对账
+
     public async Task<ReconciliationResult> ReconcileAsync(Guid userId)
     {
-        var wallet = await _walletRepository.GetByUserIdAsync(userId);
-        if (wallet == null)
-        {
-            throw new InvalidOperationException("Wallet not found");
-        }
+        var wallet = await _walletRepository.GetByUserIdAsync(userId)
+            ?? throw new InvalidOperationException("钱包不存在");
 
         var calculatedBalance = await _walletRepository.GetTransactionsSumAsync(wallet.Id);
         var isConsistent = wallet.Balance == calculatedBalance;
@@ -144,6 +132,10 @@ public class WalletService : IWalletService
             Difference = isConsistent ? null : wallet.Balance - calculatedBalance
         };
     }
+
+    #endregion
+
+    #region 流水查询
 
     public async Task<PagedTransactionResponse> GetTransactionsAsync(Guid userId, int page, int pageSize)
     {
@@ -161,8 +153,6 @@ public class WalletService : IWalletService
         }
 
         var transactions = await _walletRepository.GetTransactionsAsync(wallet.Id, page, pageSize);
-        
-        // TODO: Get total count from repository
 
         return new PagedTransactionResponse
         {
@@ -184,36 +174,137 @@ public class WalletService : IWalletService
         };
     }
 
+    #endregion
+
     #region 充值申请
 
     public async Task<DepositRequestResponse> CreateDepositRequestAsync(Guid userId, DepositRequestRequest request)
     {
-        // TODO: Implement
-        throw new NotImplementedException();
+        if (request.Amount <= 0)
+            throw new ArgumentException("充值金额必须大于0");
+
+        var now = _timeProvider.Now;
+        var internalOrderId = GenerateInternalOrderId("DP");
+
+        var depositRequest = Domain.Entities.DepositRequest.Create(
+            userId,
+            internalOrderId,
+            request.Amount,
+            request.PaymentMethod,
+            now);
+
+        await _depositRequestRepository.AddAsync(depositRequest);
+        await _unitOfWork.SaveChangesAsync();
+
+        return new DepositRequestResponse
+        {
+            RequestId = depositRequest.Id,
+            InternalOrderId = depositRequest.InternalOrderId,
+            Amount = depositRequest.Amount,
+            Status = depositRequest.Status.ToString(),
+            CreatedAt = depositRequest.CreatedAt
+        };
     }
 
     public async Task<DepositRequestResponse> ApproveDepositRequestAsync(Guid requestId, string adminUserId)
     {
-        // TODO: Implement
-        throw new NotImplementedException();
+        var depositRequest = await _depositRequestRepository.GetByIdAsync(requestId)
+            ?? throw new InvalidOperationException("充值申请不存在");
+
+        var wallet = await GetOrCreateWalletAsync(depositRequest.UserId);
+        var now = _timeProvider.Now;
+        var expectedVersion = wallet.Version;
+
+        var transaction = wallet.Credit(depositRequest.Amount, TransactionType.Deposit, "充值到账", now);
+        depositRequest.Confirm(depositRequest.InternalOrderId, now);
+
+        var success = await _walletRepository.UpdateWithCasAsync(wallet, expectedVersion);
+        if (!success)
+            throw new InvalidOperationException("CAS更新失败");
+
+        await _walletRepository.AddTransactionAsync(transaction);
+        await _unitOfWork.SaveChangesAsync();
+
+        return new DepositRequestResponse
+        {
+            RequestId = depositRequest.Id,
+            InternalOrderId = depositRequest.InternalOrderId,
+            Amount = depositRequest.Amount,
+            Status = depositRequest.Status.ToString(),
+            CreatedAt = depositRequest.CreatedAt
+        };
     }
 
     public async Task<DepositRequestResponse> RejectDepositRequestAsync(Guid requestId, string reason, string adminUserId)
     {
-        // TODO: Implement
-        throw new NotImplementedException();
+        var depositRequest = await _depositRequestRepository.GetByIdAsync(requestId)
+            ?? throw new InvalidOperationException("充值申请不存在");
+
+        var now = _timeProvider.Now;
+        depositRequest.Fail(reason, now);
+
+        await _unitOfWork.SaveChangesAsync();
+
+        return new DepositRequestResponse
+        {
+            RequestId = depositRequest.Id,
+            InternalOrderId = depositRequest.InternalOrderId,
+            Amount = depositRequest.Amount,
+            Status = depositRequest.Status.ToString(),
+            CreatedAt = depositRequest.CreatedAt
+        };
     }
 
     public async Task<PagedRequestRecordResponse> GetDepositRequestsAsync(string? status, int page, int pageSize)
     {
-        // TODO: Implement
-        throw new NotImplementedException();
+        DepositStatus? statusEnum = null;
+        if (!string.IsNullOrEmpty(status) && Enum.TryParse<DepositStatus>(status, out var parsed))
+        {
+            statusEnum = parsed;
+        }
+
+        var requests = await _depositRequestRepository.GetByStatusAsync(statusEnum ?? DepositStatus.Pending, page, pageSize);
+
+        return new PagedRequestRecordResponse
+        {
+            Items = requests.Select(r => new RequestRecordResponse
+            {
+                Id = r.Id,
+                InternalOrderId = r.InternalOrderId,
+                Amount = r.Amount,
+                Status = r.Status.ToString(),
+                ErrorMessage = r.ErrorMessage,
+                CreatedAt = r.CreatedAt,
+                UpdatedAt = r.UpdatedAt
+            }).ToList(),
+            TotalCount = requests.Count,
+            Page = page,
+            PageSize = pageSize,
+            TotalPages = 1
+        };
     }
 
     public async Task<PagedRequestRecordResponse> GetUserDepositRequestsAsync(Guid userId, int page, int pageSize)
     {
-        // TODO: Implement
-        throw new NotImplementedException();
+        var requests = await _depositRequestRepository.GetByUserIdAsync(userId, page, pageSize);
+
+        return new PagedRequestRecordResponse
+        {
+            Items = requests.Select(r => new RequestRecordResponse
+            {
+                Id = r.Id,
+                InternalOrderId = r.InternalOrderId,
+                Amount = r.Amount,
+                Status = r.Status.ToString(),
+                ErrorMessage = r.ErrorMessage,
+                CreatedAt = r.CreatedAt,
+                UpdatedAt = r.UpdatedAt
+            }).ToList(),
+            TotalCount = requests.Count,
+            Page = page,
+            PageSize = pageSize,
+            TotalPages = 1
+        };
     }
 
     #endregion
@@ -222,35 +313,169 @@ public class WalletService : IWalletService
 
     public async Task<WithdrawRequestResponse> CreateWithdrawRequestAsync(Guid userId, WithdrawRequestRequest request)
     {
-        // TODO: Implement
-        throw new NotImplementedException();
+        if (request.Amount <= 0)
+            throw new ArgumentException("提现金额必须大于0");
+
+        var bankCard = await _bankCardRepository.GetByIdAsync(request.BankCardId)
+            ?? throw new InvalidOperationException("银行卡不存在");
+
+        if (bankCard.UserId != userId)
+            throw new InvalidOperationException("银行卡不属于该用户");
+
+        var wallet = await _walletRepository.GetByUserIdAsync(userId)
+            ?? throw new InvalidOperationException("钱包不存在");
+
+        if (wallet.AvailableBalance < request.Amount)
+            throw new InsufficientBalanceException(wallet.AvailableBalance, request.Amount);
+
+        var now = _timeProvider.Now;
+        var internalOrderId = GenerateInternalOrderId("WD");
+
+        // 冻结余额
+        wallet.Freeze(request.Amount, now);
+        var expectedVersion = wallet.Version - 1;
+
+        var withdrawRequest = Domain.Entities.WithdrawRequest.Create(
+            userId,
+            internalOrderId,
+            request.Amount,
+            request.BankCardId,
+            now);
+
+        var success = await _walletRepository.UpdateWithCasAsync(wallet, expectedVersion);
+        if (!success)
+            throw new InvalidOperationException("CAS更新失败");
+
+        await _withdrawRequestRepository.AddAsync(withdrawRequest);
+        await _unitOfWork.SaveChangesAsync();
+
+        return new WithdrawRequestResponse
+        {
+            RequestId = withdrawRequest.Id,
+            InternalOrderId = withdrawRequest.InternalOrderId,
+            Amount = withdrawRequest.Amount,
+            Status = withdrawRequest.Status.ToString(),
+            CreatedAt = withdrawRequest.CreatedAt
+        };
     }
 
     public async Task<WithdrawRequestResponse> ApproveWithdrawRequestAsync(Guid requestId, string adminUserId)
     {
-        // TODO: Implement
-        throw new NotImplementedException();
+        var withdrawRequest = await _withdrawRequestRepository.GetByIdAsync(requestId)
+            ?? throw new InvalidOperationException("提现申请不存在");
+
+        var wallet = await _walletRepository.GetByUserIdAsync(withdrawRequest.UserId)
+            ?? throw new InvalidOperationException("钱包不存在");
+
+        var now = _timeProvider.Now;
+        var expectedVersion = wallet.Version;
+
+        var transaction = wallet.ConfirmFrozenDebit(withdrawRequest.Amount, TransactionType.Withdrawal, "提现到账", now);
+        withdrawRequest.Approve(now);
+
+        var success = await _walletRepository.UpdateWithCasAsync(wallet, expectedVersion);
+        if (!success)
+            throw new InvalidOperationException("CAS更新失败");
+
+        await _walletRepository.AddTransactionAsync(transaction);
+        await _unitOfWork.SaveChangesAsync();
+
+        return new WithdrawRequestResponse
+        {
+            RequestId = withdrawRequest.Id,
+            InternalOrderId = withdrawRequest.InternalOrderId,
+            Amount = withdrawRequest.Amount,
+            Status = withdrawRequest.Status.ToString(),
+            CreatedAt = withdrawRequest.CreatedAt
+        };
     }
 
     public async Task<WithdrawRequestResponse> RejectWithdrawRequestAsync(Guid requestId, string reason, string adminUserId)
     {
-        // TODO: Implement
-        throw new NotImplementedException();
+        var withdrawRequest = await _withdrawRequestRepository.GetByIdAsync(requestId)
+            ?? throw new InvalidOperationException("提现申请不存在");
+
+        var wallet = await _walletRepository.GetByUserIdAsync(withdrawRequest.UserId)
+            ?? throw new InvalidOperationException("钱包不存在");
+
+        var now = _timeProvider.Now;
+        var expectedVersion = wallet.Version;
+
+        // 解冻余额
+        wallet.Unfreeze(withdrawRequest.Amount, now);
+        withdrawRequest.Reject(reason, now);
+
+        var success = await _walletRepository.UpdateWithCasAsync(wallet, expectedVersion);
+        if (!success)
+            throw new InvalidOperationException("CAS更新失败");
+
+        await _unitOfWork.SaveChangesAsync();
+
+        return new WithdrawRequestResponse
+        {
+            RequestId = withdrawRequest.Id,
+            InternalOrderId = withdrawRequest.InternalOrderId,
+            Amount = withdrawRequest.Amount,
+            Status = withdrawRequest.Status.ToString(),
+            CreatedAt = withdrawRequest.CreatedAt
+        };
     }
 
     public async Task<PagedRequestRecordResponse> GetWithdrawRequestsAsync(string? status, int page, int pageSize)
     {
-        // TODO: Implement
-        throw new NotImplementedException();
+        WithdrawStatus? statusEnum = null;
+        if (!string.IsNullOrEmpty(status) && Enum.TryParse<WithdrawStatus>(status, out var parsed))
+        {
+            statusEnum = parsed;
+        }
+
+        var requests = await _withdrawRequestRepository.GetByStatusAsync(statusEnum ?? WithdrawStatus.Pending, page, pageSize);
+
+        return new PagedRequestRecordResponse
+        {
+            Items = requests.Select(r => new RequestRecordResponse
+            {
+                Id = r.Id,
+                InternalOrderId = r.InternalOrderId,
+                Amount = r.Amount,
+                Status = r.Status.ToString(),
+                ErrorMessage = r.RejectionReason,
+                CreatedAt = r.CreatedAt,
+                UpdatedAt = r.UpdatedAt
+            }).ToList(),
+            TotalCount = requests.Count,
+            Page = page,
+            PageSize = pageSize,
+            TotalPages = 1
+        };
     }
 
     public async Task<PagedRequestRecordResponse> GetUserWithdrawRequestsAsync(Guid userId, int page, int pageSize)
     {
-        // TODO: Implement
-        throw new NotImplementedException();
+        var requests = await _withdrawRequestRepository.GetByUserIdAsync(userId, page, pageSize);
+
+        return new PagedRequestRecordResponse
+        {
+            Items = requests.Select(r => new RequestRecordResponse
+            {
+                Id = r.Id,
+                InternalOrderId = r.InternalOrderId,
+                Amount = r.Amount,
+                Status = r.Status.ToString(),
+                ErrorMessage = r.RejectionReason,
+                CreatedAt = r.CreatedAt,
+                UpdatedAt = r.UpdatedAt
+            }).ToList(),
+            TotalCount = requests.Count,
+            Page = page,
+            PageSize = pageSize,
+            TotalPages = 1
+        };
     }
 
     #endregion
+
+    #region Helper Methods
 
     private async Task<Domain.Entities.Wallet> GetOrCreateWalletAsync(Guid userId)
     {
@@ -263,4 +488,11 @@ public class WalletService : IWalletService
         }
         return wallet;
     }
+
+    private static string GenerateInternalOrderId(string prefix)
+    {
+        return $"{prefix}{DateTime.Now:yyyyMMddHHmmssfff}{Guid.NewGuid().ToString("N")[..8].ToUpper()}";
+    }
+
+    #endregion
 }
